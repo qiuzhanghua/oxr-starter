@@ -2,9 +2,11 @@
 #
 # oxr-vllm.sh —— 管理 OXR 的 vLLM 服务（systemd 用户单元）
 #
-#   ./oxr-vllm.sh install     安装并启动（开机自启）
+#   ./oxr-vllm.sh install     只安装单元文件（不启用、不启动）
+#   ./oxr-vllm.sh uninstall   停止并移除单元
 #   ./oxr-vllm.sh uninstall   停止并移除
 #   ./oxr-vllm.sh start|stop|restart|status|logs
+#   ./oxr-vllm.sh enable|disable   是否开机自启（默认不启用）
 #   ./oxr-vllm.sh run         前台直接跑（调试用，不经过 systemd）
 #   ./oxr-vllm.sh check       检查环境（venv / 模型 / 插件 / 端口）
 #
@@ -82,22 +84,35 @@ case "${1:-}" in
   install)
     mkdir -p "$UNIT_DIR"; gen_unit
     systemctl --user daemon-reload
-    systemctl --user enable --now "$UNIT"
-    log "已安装并启动；等待就绪（最多 120s）…"
-    for i in $(seq 1 60); do
-      sleep 2
-      curl -sf -o /dev/null "http://127.0.0.1:$PORT/v1/models" && { log "服务就绪（约 $((i*2))s）"; exit 0; }
-    done
-    systemctl --user --no-pager status "$UNIT" | tail -15
-    die "启动超时，看日志：./oxr-vllm.sh logs"
+    log "单元已安装（未启用、未启动）"
+    log "启动：  ./scripts/oxr-vllm.sh start"
+    log "自启：  ./scripts/oxr-vllm.sh enable"
+    ;;
+  enable|disable)
+    systemctl --user "$1" "$UNIT" && log "已$([[ $1 == enable ]] && echo 启用 || echo 禁用)开机自启"
     ;;
   uninstall)
     systemctl --user disable --now "$UNIT" 2>/dev/null
     rm -f "$UNIT_FILE"; systemctl --user daemon-reload
     log "已卸载"
     ;;
-  start|stop|restart|status)
-    systemctl --user "$1" "$UNIT" ;;
+  start)
+    systemctl --user start "$UNIT" || die "启动失败，看日志：./scripts/oxr-vllm.sh logs"
+    log "已启动；等待就绪（最多 120s）…"
+    for i in $(seq 1 60); do
+      sleep 2
+      curl -sf -o /dev/null "http://127.0.0.1:$PORT/v1/models" && { log "服务就绪（约 $((i*2))s）"; exit 0; }
+    done
+    systemctl --user --no-pager status "$UNIT" | tail -15
+    die "启动超时，看日志：./scripts/oxr-vllm.sh logs"
+    ;;
+  stop|restart)
+    systemctl --user "$1" "$UNIT" \
+      && log "$([[ $1 == stop ]] && echo '已停止（显存已释放）' || echo '已重启')" ;;
+  status)
+    systemctl --user is-active "$UNIT" >/dev/null 2>&1 \
+      && log "运行中（端口 $PORT）" || log "未运行"
+    systemctl --user --no-pager status "$UNIT" | head -6 ;;
   logs)
     journalctl --user -u "$UNIT" -n "${2:-60}" --no-pager ;;
   run)

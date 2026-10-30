@@ -99,20 +99,26 @@ curl -s http://127.0.0.1:8001/v1/chat/completions \
 
 ## 常驻服务：用脚本管理（推荐）
 
-`scripts/oxr-vllm.sh` 把下面这一整套封装好了：
+`scripts/oxr-vllm.sh` 把下面这一整套封装好了。**默认不启用开机自启**，
+服务只在需要时手动 start：
 
 ```bash
 ./scripts/oxr-vllm.sh check       # 检查 venv / 模型 / 插件 / 头文件 / 端口
-./scripts/oxr-vllm.sh install     # 生成单元 + 开机自启 + 等待就绪
-./scripts/oxr-vllm.sh status      # systemctl status
-./scripts/oxr-vllm.sh logs [行数]  # journalctl
-./scripts/oxr-vllm.sh restart | stop | start
+./scripts/oxr-vllm.sh install     # 只安装单元文件（不启用、不启动）
+./scripts/oxr-vllm.sh start       # 启动并等待就绪
+./scripts/oxr-vllm.sh stop        # 停止（释放显存）
+./scripts/oxr-vllm.sh restart
+./scripts/oxr-vllm.sh status      # 运行中/未运行 + systemctl 摘要
+./scripts/oxr-vllm.sh logs [行数]
+./scripts/oxr-vllm.sh enable      # 需要开机自启时才用
+./scripts/oxr-vllm.sh disable     # 取消自启（默认就是禁用状态）
 ./scripts/oxr-vllm.sh run         # 前台直接跑（调试，不经 systemd）
 ./scripts/oxr-vllm.sh uninstall
 ```
 
 `install` 会**根据当前环境自动生成**单元文件（模型快照路径、venv 路径、头文件路径
-都写成实际值），所以换机器/换缓存目录时不用手改配置。
+都写成实际值），所以换机器/换缓存目录时不用手改配置。它**不启用也不启动**——
+设计上是"用时 start、不用 stop"，避免显存常驻。
 
 可用环境变量覆盖：
 

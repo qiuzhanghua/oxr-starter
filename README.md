@@ -64,10 +64,14 @@ uv run python -m oxr_starter.layout doc.pdf --page 3 --parse-tables
 ## vLLM 服务
 
 ```bash
-./scripts/oxr-vllm.sh install    # 安装成 systemd 用户服务并启动
+./scripts/oxr-vllm.sh install    # 安装单元文件（不启用、不启动）
+./scripts/oxr-vllm.sh start      # 启动并等待就绪（约 30-50s）
+./scripts/oxr-vllm.sh stop       # 停止，释放显存
+./scripts/oxr-vllm.sh status     # 看状态
 ./scripts/oxr-vllm.sh check      # 环境自检
-./scripts/oxr-vllm.sh logs       # 看日志
 ```
+
+默认不开机自启；需要时 `enable` / `disable` 切换。
 
 详见 [docs/vllm.md](docs/vllm.md)。服务就绪后即可 `--backend vllm` 调用。
 
