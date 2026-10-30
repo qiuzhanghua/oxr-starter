@@ -62,6 +62,5 @@ uv run python -m oxr_starter.generate_demo ~/some-page.png
 ```
 src/oxr_starter/
 ├── load_model.py       # 加载 + 显存报告
-├── generate_demo.py    # 单图推理
-└── vendor/             # 从 HF 仓库复制的 OXRProcessor（当前未使用）
+└── generate_demo.py    # 单图推理
 ```

@@ -15,9 +15,8 @@ from __future__ import annotations
 import time
 
 import torch
-from transformers import AutoImageProcessor, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from .vendor.oxr_processor import OXRProcessor
 
 MODEL_ID = "SoMarkAI/OXR-1.0"
 
@@ -35,13 +34,7 @@ def main() -> None:
 
     t0 = time.time()
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-    image_processor = AutoImageProcessor.from_pretrained(MODEL_ID)
-    processor = OXRProcessor(
-        image_processor=image_processor,
-        tokenizer=tokenizer,
-        image_pad_token="<|image_pad|>",
-    )
-    print(f"processor 就绪（{time.time() - t0:.1f}s）")
+    print(f"tokenizer 就绪（{time.time() - t0:.1f}s，vocab {len(tokenizer)}）")
 
     t1 = time.time()
     model = AutoModelForCausalLM.from_pretrained(
