@@ -48,6 +48,9 @@ uv run python -m oxr_starter.parse_pdf doc.pdf --parse-tables
 uv run python -m oxr_starter.parse_pdf doc.pdf --backend vllm
 uv run python -m oxr_starter.parse_batch ~/papers --backend vllm --parse-tables
 
+# 并发（仅 vllm 后端生效；渲染仍在主线程，识别请求并行）
+uv run python -m oxr_starter.parse_pdf doc.pdf --backend vllm --workers 4
+
 # 批量：目录下所有 PDF → Markdown
 uv run python -m oxr_starter.parse_batch ~/papers -o ~/papers/md
 uv run python -m oxr_starter.parse_batch ~/papers --skip-existing --limit 3
@@ -87,6 +90,7 @@ OXR 本体**不输出布局框**：用官方 layout 提示词实测，模型仍�
 | 单张小图（900×620）| 6.9 s | — |
 | PDF A4 单页 @150 DPI | 27.6 s | **1.3–2.1 s** |
 | 4 页 PDF 全文 | 112.8 s | **5.5 s** |
+| 4 页 PDF（并发 `--workers 4`）| — | **2.2 s** |
 | 单页 + 表格替换 | 55.2 s | **2.1 s** |
 
 vLLM 约快 20 倍，显存占用 8.8 GB（`--gpu-memory-utilization 0.55`）。
