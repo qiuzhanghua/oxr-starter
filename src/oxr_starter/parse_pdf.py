@@ -16,6 +16,8 @@ import argparse
 import time
 from pathlib import Path
 
+import re
+
 import pymupdf
 import torch
 from PIL import Image
@@ -39,12 +41,21 @@ def to_cuda(x):
     return x.to("cuda")
 
 
-def parse_page(model, image: Image.Image, max_tokens: int) -> str:
+PROMPT_TABLE = "Recognize the table of the image into html format."
+TABLE_RE = re.compile(r"<table[\s\S]*?</table>", re.IGNORECASE)
+
+
+def _crop(page: pymupdf.Page, box, dpi: int) -> Image.Image:
+    pix = page.get_pixmap(dpi=dpi, clip=pymupdf.Rect(*box))
+    return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+
+
+def _recognize(model, image: Image.Image, prompt: str, max_tokens: int) -> str:
     messages = [{
         "role": "user",
         "content": [
             {"type": "image", "image": image},
-            {"type": "text", "text": PROMPT_WHOLE_PAGE},
+            {"type": "text", "text": prompt},
         ],
     }]
     input_ids, pixel_values, grid_thws = model.preprocess_inputs(messages)
@@ -56,7 +67,39 @@ def parse_page(model, image: Image.Image, max_tokens: int) -> str:
             max_new_tokens=max_tokens,
             do_sample=False,
         )
-    return model.text_tokenizer.decode(out[0], skip_special_tokens=True)
+    return model.text_tokenizer.decode(out[0], skip_special_tokens=True).strip()
+
+
+def replace_tables(model, page: pymupdf.Page, markdown: str,
+                   dpi: int, max_tokens: int) -> tuple[str, int]:
+    """用表格区域的精细识别结果替换整页 markdown 里的 <table> 块。
+
+    返回 (替换后的 markdown, 实际替换个数)。
+    """
+    try:
+        boxes = [[round(v) for v in t.bbox] for t in page.find_tables()]
+    except Exception:
+        return markdown, 0
+    if not boxes:
+        return markdown, 0
+
+    tables_in_md = list(TABLE_RE.finditer(markdown))
+    replaced = 0
+    out = markdown
+    for idx in range(min(len(boxes), len(tables_in_md))):
+        try:
+            html = _recognize(model, _crop(page, boxes[idx], dpi), PROMPT_TABLE, max_tokens)
+        except Exception:
+            continue
+        if not html.lstrip().lower().startswith("<table"):
+            continue
+        out = out.replace(tables_in_md[idx].group(0), html, 1)
+        replaced += 1
+    return out, replaced
+
+
+def parse_page(model, image: Image.Image, max_tokens: int) -> str:
+    return _recognize(model, image, PROMPT_WHOLE_PAGE, max_tokens)
 
 
 def main() -> None:
@@ -66,6 +109,8 @@ def main() -> None:
     ap.add_argument("--dpi", type=int, default=150, help="渲染 DPI，默认 150")
     ap.add_argument("--max-tokens", type=int, default=2048, help="每页最大生成 token")
     ap.add_argument("--pages", type=str, default="", help="只处理指定页，如 1-3,7")
+    ap.add_argument("--parse-tables", action="store_true",
+                    help="表格区域单独精细识别，替换整页结果里的 <table>")
     args = ap.parse_args()
 
     if not torch.cuda.is_available():
@@ -99,11 +144,16 @@ def main() -> None:
     parts: list[str] = [f"# {args.pdf.stem}\n"]
     for i in indices:
         t1 = time.time()
-        img = render_page(doc[i - 1], args.dpi)
+        page = doc[i - 1]
+        img = render_page(page, args.dpi)
         text = parse_page(model, img, args.max_tokens).strip()
+        n_tables = 0
+        if args.parse_tables:
+            text, n_tables = replace_tables(model, page, text, args.dpi, args.max_tokens)
         dt = time.time() - t1
+        extra = f"，替换表格 {n_tables} 个" if args.parse_tables else ""
         print(f"  第 {i}/{total} 页：{img.size[0]}x{img.size[1]}，"
-              f"{len(text)} 字符，{dt:.1f}s")
+              f"{len(text)} 字符，{dt:.1f}s{extra}")
         parts.append(f"\n<!-- 第 {i} 页 -->\n\n{text}\n")
 
     out_path.write_text("".join(parts), encoding="utf-8")

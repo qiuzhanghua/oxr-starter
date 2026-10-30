@@ -41,6 +41,9 @@ uv run python -m oxr_starter.generate_demo ~/some-page.png
 uv run python -m oxr_starter.parse_pdf doc.pdf -o doc.md
 uv run python -m oxr_starter.parse_pdf doc.pdf --pages 1-3,7 --dpi 150
 
+# 表格区域精细识别（替换整页结果里的 <table>）
+uv run python -m oxr_starter.parse_pdf doc.pdf --parse-tables
+
 # 批量：目录下所有 PDF → Markdown
 uv run python -m oxr_starter.parse_batch ~/papers -o ~/papers/md
 uv run python -m oxr_starter.parse_batch ~/papers --skip-existing --limit 3
@@ -58,6 +61,10 @@ OXR 本体**不输出布局框**：用官方 layout 提示词实测，模型仍�
 
 本项目的折中方案：用 **PyMuPDF** 的结构信息检测区域（文本块 / 图片 / 表格），
 再对**表格区域**裁剪后单独送给模型，用官方表格提示词识别。
+
+`parse_pdf --parse-tables` 会把整页结果里的 `<table>` 块替换成表格区域单独识别的
+结果（按 PyMuPDF 检测到的表格顺序匹配）。代价是每张表多一次生成：实测单页
+28s → 55s。
 
 实测效果（`ctex-demo.pdf` 第 3 页，4 行 × 3 列表格）：
 
