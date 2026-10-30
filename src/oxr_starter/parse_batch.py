@@ -46,6 +46,8 @@ def main() -> None:
                     help="local=进程内加载；vllm=调用已启动的 vLLM 服务")
     ap.add_argument("--base-url", default="http://127.0.0.1:8001/v1")
     ap.add_argument("--workers", type=int, default=1, help="并发页数（仅 vllm）")
+    ap.add_argument("--no-resume", action="store_true",
+                    help="忽略页码级断点缓存，重新识别所有页")
     ap.add_argument("--parse-tables", action="store_true",
                     help="表格区域单独精细识别（每张表多一次生成，较慢）")
     args = ap.parse_args()
@@ -97,13 +99,19 @@ def main() -> None:
             parts = [f"# {pdf.stem}\n"]
             t1 = time.time()
             workers = args.workers if backend.name == "vllm" else 1
-            results = process_pages(backend, doc, indices, args.dpi, args.max_tokens,
-                                    args.parse_tables, workers)
+            parts_dir = None if args.no_resume else dst.parent / f"{dst.stem}.parts"
+            results, failed = process_pages(backend, doc, indices, args.dpi, args.max_tokens,
+                                            args.parse_tables, workers, parts_dir)
             tables_total = 0
             for i in indices:
-                text, n = results[i]
-                tables_total += n
+                if i not in results:
+                    parts.append(f"\n<!-- 第 {i} 页 识别失败，重跑可续传 -->\n")
+                    continue
+                text, nt = results[i]
+                tables_total += nt
                 parts.append(f"\n<!-- 第 {i} 页 -->\n\n{text}\n")
+            if failed:
+                raise RuntimeError(f"{len(failed)} 页失败: {failed}")
             dst.write_text("".join(parts), encoding="utf-8")
             dt = time.time() - t1
             extra = f"，表格 {tables_total}" if args.parse_tables else ""

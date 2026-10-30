@@ -61,6 +61,38 @@ uv run python -m oxr_starter.layout doc.pdf --page 3
 uv run python -m oxr_starter.layout doc.pdf --page 3 --parse-tables
 ```
 
+## 后端与并发
+
+| 参数 | 取值 | 说明 |
+|---|---|---|
+| `--backend` | `local` / `vllm` | local 进程内加载（3.9 GB 显存）；vllm 走 HTTP 服务 |
+| `--base-url` | 默认 `http://127.0.0.1:8001/v1` | vLLM 服务地址 |
+| `--workers` | 默认 1 | 并发页数，**仅 vllm 生效**；local 自动忽略 |
+
+并发实现：PyMuPDF 渲染留在主线程（非线程安全），识别请求在线程池里并行发出；
+表格裁剪后同样并发识别。每批最多 `workers` 张图驻留内存。
+
+## 页码级断点
+
+每页识别成功后会立刻写入 `<输出名>.parts/p0001.md`；中断或部分失败后，
+**重跑同一条命令即可续传**，已完成的页不会再识别。
+
+```bash
+uv run python -m oxr_starter.parse_pdf doc.pdf --backend vllm --workers 4
+# 中断后再跑同一条命令
+# 断点续跑: doc.parts（已有 37 页）
+```
+
+| 参数 | 作用 |
+|---|---|
+| `--no-resume` | 忽略缓存，全部重做 |
+| `--clean-parts` | 全部成功后删掉 `.parts` 目录 |
+
+未完成的页会在输出 markdown 里留 `<!-- 第 N 页 识别失败，重跑可续传 -->`，
+命令以退出码 1 结束，方便脚本判断。
+
+批量模式每个文件各自维护 `<文件名>.parts/`。
+
 ## 关于版面分析
 
 OXR 本体**不输出布局框**：用官方 layout 提示词实测，模型仍然返回整页内容。
