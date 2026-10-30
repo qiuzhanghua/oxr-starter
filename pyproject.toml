@@ -1,0 +1,28 @@
+[project]
+name = "oxr-starter"
+version = "0.1.0"
+description = "Local transformers harness for SoMarkAI/OXR-1.0 document parsing"
+readme = "README.md"
+authors = [
+    { name = "qiuzhanghua", email = "qiuzhanghua@icloud.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate>=1.15.0",
+    "numpy>=2.5.4",
+    "pillow>=13.0.0",
+    "safetensors>=0.8.0",
+    "torch>=2.15.0",
+    "transformers>=5.22.0",
+]
+
+[project.scripts]
+oxr-starter = "oxr_starter:main"
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
