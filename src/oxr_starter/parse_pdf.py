@@ -188,6 +188,8 @@ def main() -> None:
                     help="忽略页码级断点缓存，重新识别所有页")
     ap.add_argument("--clean-parts", action="store_true",
                     help="全部页成功后删除断点缓存目录")
+    ap.add_argument("--extract-images", action="store_true",
+                    help="提取页面里的位图图片，并在 markdown 里插入引用")
     args = ap.parse_args()
 
     if not args.pdf.exists():
@@ -211,6 +213,17 @@ def main() -> None:
     results, failed = process_pages(backend, doc, indices, args.dpi, args.max_tokens,
                                     args.parse_tables, workers, parts_dir)
 
+    img_items: dict[int, list[dict]] = {}
+    img_dir = None
+    if args.extract_images:
+        from .images import extract_document
+
+        img_dir = out_path.parent / f"{out_path.stem}.images"
+        items = extract_document(args.pdf, img_dir)
+        for it in items:
+            img_items.setdefault(it["page"], []).append(it)
+        print(f"图片: 提取 {len(items)} 张 → {img_dir}")
+
     parts = [f"# {args.pdf.stem}\n"]
     missing = []
     for i in indices:
@@ -222,6 +235,10 @@ def main() -> None:
         extra = f"，表格 {n}" if args.parse_tables else ""
         print(f"  第 {i}/{doc.page_count} 页：{len(text)} 字符{extra}")
         parts.append(f"\n<!-- 第 {i} 页 -->\n\n{text}\n")
+        for it in img_items.get(i, []):
+            rel = f"{img_dir.name}/{it['file']}"
+            parts.append(f"\n<!-- 图片 {it['file']} bbox={it['bbox']} -->\n"
+                         f"![{it['file']}]({rel})\n")
 
     out_path.write_text("".join(parts), encoding="utf-8")
     print(f"完成：{out_path}（{time.time() - t0:.1f}s 总计）")

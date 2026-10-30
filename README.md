@@ -72,6 +72,29 @@ uv run python -m oxr_starter.layout doc.pdf --page 3 --parse-tables
 并发实现：PyMuPDF 渲染留在主线程（非线程安全），识别请求在线程池里并行发出；
 表格裁剪后同样并发识别。每批最多 `workers` 张图驻留内存。
 
+## 图片提取
+
+```bash
+# 解析时顺带提取（图片存到 <输出>.images/，markdown 里插引用）
+uv run python -m oxr_starter.parse_pdf doc.pdf --extract-images
+
+# 只提取，不解析
+uv run python -m oxr_starter.images doc.pdf -o out/images
+```
+
+导出的是 PDF 里**原始嵌入的位图**（`doc.extract_image`），不是页面渲染截图，
+所以保留原始分辨率和格式；同时生成 `manifest.json`：
+
+```json
+{"page": 1, "file": "p0001-img01.png", "bbox": [109.1, 100.0, 390.9, 300.0],
+ "width": 310, "height": 220, "bytes": 1024}
+```
+
+过滤规则：面积占页面 < 0.5%、或边长 < 24 px 的图片会被跳过（图标、装饰线）。
+用 `--min-area` 调整。
+
+> 纯矢量文档（TeX/TikZ 绘图）没有位图，工具会提示"没有可提取的位图"。
+
 ## 页码级断点
 
 每页识别成功后会立刻写入 `<输出名>.parts/p0001.md`；中断或部分失败后，
@@ -159,5 +182,6 @@ src/oxr_starter/
 ├── parse_pdf.py        # PDF 逐页解析 → Markdown
 ├── parse_batch.py      # 目录批量处理
 ├── layout.py           # 区域检测 + 表格精细识别
+├── images.py           # 位图提取 + manifest
 └── backend.py          # 后端抽象：local(transformers) / vllm
 ```
