@@ -21,9 +21,7 @@ import re
 import pymupdf
 import torch
 from PIL import Image
-from transformers import AutoModelForCausalLM
-
-MODEL_ID = "SoMarkAI/OXR-1.0"
+from .backend import make_backend
 PROMPT_WHOLE_PAGE = "Recognize the whole page content of the image."
 
 
@@ -50,27 +48,11 @@ def _crop(page: pymupdf.Page, box, dpi: int) -> Image.Image:
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
 
-def _recognize(model, image: Image.Image, prompt: str, max_tokens: int) -> str:
-    messages = [{
-        "role": "user",
-        "content": [
-            {"type": "image", "image": image},
-            {"type": "text", "text": prompt},
-        ],
-    }]
-    input_ids, pixel_values, grid_thws = model.preprocess_inputs(messages)
-    with torch.inference_mode():
-        out = model.generate(
-            inputs=input_ids.to("cuda"),
-            pixel_values=to_cuda(pixel_values),
-            grid_thws=to_cuda(grid_thws),
-            max_new_tokens=max_tokens,
-            do_sample=False,
-        )
-    return model.text_tokenizer.decode(out[0], skip_special_tokens=True).strip()
+def _recognize(backend, image: Image.Image, prompt: str, max_tokens: int) -> str:
+    return backend.recognize(image, prompt, max_tokens)
 
 
-def replace_tables(model, page: pymupdf.Page, markdown: str,
+def replace_tables(backend, page: pymupdf.Page, markdown: str,
                    dpi: int, max_tokens: int) -> tuple[str, int]:
     """用表格区域的精细识别结果替换整页 markdown 里的 <table> 块。
 
@@ -88,7 +70,7 @@ def replace_tables(model, page: pymupdf.Page, markdown: str,
     out = markdown
     for idx in range(min(len(boxes), len(tables_in_md))):
         try:
-            html = _recognize(model, _crop(page, boxes[idx], dpi), PROMPT_TABLE, max_tokens)
+            html = _recognize(backend, _crop(page, boxes[idx], dpi), PROMPT_TABLE, max_tokens)
         except Exception:
             continue
         if not html.lstrip().lower().startswith("<table"):
@@ -98,8 +80,8 @@ def replace_tables(model, page: pymupdf.Page, markdown: str,
     return out, replaced
 
 
-def parse_page(model, image: Image.Image, max_tokens: int) -> str:
-    return _recognize(model, image, PROMPT_WHOLE_PAGE, max_tokens)
+def parse_page(backend, image: Image.Image, max_tokens: int) -> str:
+    return _recognize(backend, image, PROMPT_WHOLE_PAGE, max_tokens)
 
 
 def main() -> None:
@@ -109,12 +91,15 @@ def main() -> None:
     ap.add_argument("--dpi", type=int, default=150, help="渲染 DPI，默认 150")
     ap.add_argument("--max-tokens", type=int, default=2048, help="每页最大生成 token")
     ap.add_argument("--pages", type=str, default="", help="只处理指定页，如 1-3,7")
+    ap.add_argument("--backend", choices=["local", "vllm"], default="local",
+                    help="local=进程内加载；vllm=调用已启动的 vLLM 服务")
+    ap.add_argument("--base-url", default="http://127.0.0.1:8001/v1", help="vLLM 服务地址")
     ap.add_argument("--parse-tables", action="store_true",
                     help="表格区域单独精细识别，替换整页结果里的 <table>")
     args = ap.parse_args()
 
-    if not torch.cuda.is_available():
-        raise SystemExit("CUDA 不可用：请在 systemd 服务里运行")
+    if args.backend == "local" and not torch.cuda.is_available():
+        raise SystemExit("CUDA 不可用：请在 systemd 服务里运行（或用 --backend vllm）")
     if not args.pdf.exists():
         raise SystemExit(f"文件不存在: {args.pdf}")
 
@@ -134,22 +119,18 @@ def main() -> None:
     print(f"输入: {args.pdf}（{total} 页，处理 {len(indices)} 页，{args.dpi} DPI）")
 
     t0 = time.time()
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID, trust_remote_code=True, dtype=torch.bfloat16,
-        device_map="cuda:0", low_cpu_mem_usage=True,
-    )
-    model.eval()
-    print(f"模型就绪（{time.time() - t0:.1f}s）")
+    backend = make_backend(args.backend, args.base_url)
+    print(f"后端就绪: {backend.name}（{time.time() - t0:.1f}s）")
 
     parts: list[str] = [f"# {args.pdf.stem}\n"]
     for i in indices:
         t1 = time.time()
         page = doc[i - 1]
         img = render_page(page, args.dpi)
-        text = parse_page(model, img, args.max_tokens).strip()
+        text = parse_page(backend, img, args.max_tokens).strip()
         n_tables = 0
         if args.parse_tables:
-            text, n_tables = replace_tables(model, page, text, args.dpi, args.max_tokens)
+            text, n_tables = replace_tables(backend, page, text, args.dpi, args.max_tokens)
         dt = time.time() - t1
         extra = f"，替换表格 {n_tables} 个" if args.parse_tables else ""
         print(f"  第 {i}/{total} 页：{img.size[0]}x{img.size[1]}，"
@@ -158,7 +139,8 @@ def main() -> None:
 
     out_path.write_text("".join(parts), encoding="utf-8")
     print(f"完成：{out_path}（{time.time() - t0:.1f}s 总计）")
-    print(f"显存峰值: {round(torch.cuda.max_memory_allocated() / 1024**3, 2)} GB")
+    if args.backend == "local":
+        print(f"显存峰值: {round(torch.cuda.max_memory_allocated() / 1024**3, 2)} GB")
 
 
 if __name__ == "__main__":

@@ -12,11 +12,10 @@ import time
 from pathlib import Path
 
 import pymupdf
-import torch
 from PIL import Image
-from transformers import AutoModelForCausalLM
 
-from .parse_pdf import MODEL_ID, PROMPT_WHOLE_PAGE, replace_tables, to_cuda
+from .backend import make_backend
+from .parse_pdf import PROMPT_WHOLE_PAGE, replace_tables
 
 DEFAULT_PATTERN = "*.pdf"
 
@@ -26,24 +25,8 @@ def render_page(page: pymupdf.Page, dpi: int) -> Image.Image:
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
 
-def parse_page(model, image: Image.Image, max_tokens: int) -> str:
-    messages = [{
-        "role": "user",
-        "content": [
-            {"type": "image", "image": image},
-            {"type": "text", "text": PROMPT_WHOLE_PAGE},
-        ],
-    }]
-    input_ids, pixel_values, grid_thws = model.preprocess_inputs(messages)
-    with torch.inference_mode():
-        out = model.generate(
-            inputs=input_ids.to("cuda"),
-            pixel_values=to_cuda(pixel_values),
-            grid_thws=to_cuda(grid_thws),
-            max_new_tokens=max_tokens,
-            do_sample=False,
-        )
-    return model.text_tokenizer.decode(out[0], skip_special_tokens=True)
+def parse_page(backend, image: Image.Image, max_tokens: int) -> str:
+    return backend.recognize(image, PROMPT_WHOLE_PAGE, max_tokens)
 
 
 def collect_pdfs(root: Path, pattern: str) -> list[Path]:
@@ -60,6 +43,9 @@ def main() -> None:
     ap.add_argument("--pages", type=str, default="", help="每份只处理指定页，如 1-3")
     ap.add_argument("--skip-existing", action="store_true", help="跳过已存在且不为空的 .md")
     ap.add_argument("--limit", type=int, default=0, help="最多处理几个文件（调试用）")
+    ap.add_argument("--backend", choices=["local", "vllm"], default="local",
+                    help="local=进程内加载；vllm=调用已启动的 vLLM 服务")
+    ap.add_argument("--base-url", default="http://127.0.0.1:8001/v1")
     ap.add_argument("--parse-tables", action="store_true",
                     help="表格区域单独精细识别（每张表多一次生成，较慢）")
     args = ap.parse_args()
@@ -90,12 +76,8 @@ def main() -> None:
     print(f"找到 {len(pdfs)} 个文件")
 
     t0 = time.time()
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID, trust_remote_code=True, dtype=torch.bfloat16,
-        device_map="cuda:0", low_cpu_mem_usage=True,
-    )
-    model.eval()
-    print(f"模型就绪（{time.time() - t0:.1f}s）\n")
+    backend = make_backend(args.backend, args.base_url)
+    print(f"后端就绪: {backend.name}（{time.time() - t0:.1f}s）\n")
 
     done, skipped, failed = 0, 0, 0
     for n, pdf in enumerate(pdfs, 1):
@@ -118,9 +100,9 @@ def main() -> None:
             for i in indices:
                 page = doc[i - 1]
                 img = render_page(page, args.dpi)
-                text = parse_page(model, img, args.max_tokens).strip()
+                text = parse_page(backend, img, args.max_tokens).strip()
                 if args.parse_tables:
-                    text, n = replace_tables(model, page, text, args.dpi, args.max_tokens)
+                    text, n = replace_tables(backend, page, text, args.dpi, args.max_tokens)
                     tables_total += n
                 parts.append(f"\n<!-- 第 {i} 页 -->\n\n{text}\n")
             dst.write_text("".join(parts), encoding="utf-8")

@@ -44,6 +44,10 @@ uv run python -m oxr_starter.parse_pdf doc.pdf --pages 1-3,7 --dpi 150
 # 表格区域精细识别（替换整页结果里的 <table>）
 uv run python -m oxr_starter.parse_pdf doc.pdf --parse-tables
 
+# 走 vLLM 服务（前提：vLLM 已启动，见 docs/vllm.md）
+uv run python -m oxr_starter.parse_pdf doc.pdf --backend vllm
+uv run python -m oxr_starter.parse_batch ~/papers --backend vllm --parse-tables
+
 # 批量：目录下所有 PDF → Markdown
 uv run python -m oxr_starter.parse_batch ~/papers -o ~/papers/md
 uv run python -m oxr_starter.parse_batch ~/papers --skip-existing --limit 3
@@ -78,10 +82,15 @@ OXR 本体**不输出布局框**：用官方 layout 提示词实测，模型仍�
 
 ## 性能（本机实测）
 
-| 场景 | 耗时 | 显存峰值 |
+| 场景 | transformers | vLLM |
 |---|---|---|
-| 单张小图（900×620）| 6.9 s（512 tok，74.7 tok/s）| 2.91 GB |
-| PDF A4 单页 @150 DPI（1241×1754）| 约 28 s | 3.93 GB |
+| 单张小图（900×620）| 6.9 s | — |
+| PDF A4 单页 @150 DPI | 27.6 s | **1.3–2.1 s** |
+| 4 页 PDF 全文 | 112.8 s | **5.5 s** |
+| 单页 + 表格替换 | 55.2 s | **2.1 s** |
+
+vLLM 约快 20 倍，显存占用 8.8 GB（`--gpu-memory-utilization 0.55`）。
+搭建方法见 [docs/vllm.md](docs/vllm.md)。
 
 PDF 每页约 28 秒，主要花在视觉 token 上的自回归生成。想加速可以：
 降低 `--dpi`、减小 `--max-tokens`，或改用官方 vLLM 路径。
@@ -113,5 +122,6 @@ src/oxr_starter/
 ├── generate_demo.py    # 单图推理
 ├── parse_pdf.py        # PDF 逐页解析 → Markdown
 ├── parse_batch.py      # 目录批量处理
-└── layout.py           # 区域检测 + 表格精细识别
+├── layout.py           # 区域检测 + 表格精细识别
+└── backend.py          # 后端抽象：local(transformers) / vllm
 ```
