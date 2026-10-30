@@ -61,6 +61,40 @@ uv run python -m oxr_starter.layout doc.pdf --page 3
 uv run python -m oxr_starter.layout doc.pdf --page 3 --parse-tables
 ```
 
+## Python API
+
+```python
+from oxr_starter import parse
+
+doc = parse("paper.pdf", backend="vllm", workers=4, parse_tables=True)
+print(doc.markdown)              # 整份 markdown
+print(doc.pages[0].markdown)     # 单页文本
+print(doc.pages[0].tables)       # [Region(bbox=[...], html="<table>…")]
+doc.save("out.md", json_path=True)
+```
+
+批量复用后端（避免重复建连接）：
+
+```python
+from oxr_starter import OXRClient
+
+with OXRClient(backend="vllm", workers=4) as client:
+    for pdf in pdfs:
+        doc = client.parse(pdf, parse_tables=True)
+        doc.save(f"out/{pdf.stem}.md")
+```
+
+数据类型：
+
+| 类型 | 字段 |
+|---|---|
+| `Document` | `source` / `pages` / `meta` / `images_dir` / `markdown` / `failed_pages` |
+| `Page` | `number` / `markdown` / `tables` / `images` / `failed` |
+| `Region` | `bbox` / `html` |
+| `ImageRef` | `file` / `bbox` / `width` / `height` / `bytes` |
+
+`Document` 还提供 `to_dict()`、`to_json()`、`save(path, json_path=)`。
+
 ## vLLM 服务
 
 ```bash
@@ -231,6 +265,7 @@ src/oxr_starter/
 ├── generate_demo.py    # 单图推理
 ├── parse_pdf.py        # PDF 逐页解析 → Markdown
 ├── parse_batch.py      # 目录批量处理
+├── api.py              # Python API：parse() / OXRClient / Document
 ├── layout.py           # 区域检测 + 表格精细识别
 ├── images.py           # 位图提取 + manifest
 └── backend.py          # 后端抽象：local(transformers) / vllm
