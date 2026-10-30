@@ -36,7 +36,21 @@ uv run python -m oxr_starter.generate_demo
 
 # 推理：指定图片
 uv run python -m oxr_starter.generate_demo ~/some-page.png
+
+# PDF → Markdown（逐页渲染后识别）
+uv run python -m oxr_starter.parse_pdf doc.pdf -o doc.md
+uv run python -m oxr_starter.parse_pdf doc.pdf --pages 1-3,7 --dpi 150
 ```
+
+## 性能（本机实测）
+
+| 场景 | 耗时 | 显存峰值 |
+|---|---|---|
+| 单张小图（900×620）| 6.9 s（512 tok，74.7 tok/s）| 2.91 GB |
+| PDF A4 单页 @150 DPI（1241×1754）| 约 28 s | 3.93 GB |
+
+PDF 每页约 28 秒，主要花在视觉 token 上的自回归生成。想加速可以：
+降低 `--dpi`、减小 `--max-tokens`，或改用官方 vLLM 路径。
 
 ## 实现要点
 
@@ -62,5 +76,6 @@ uv run python -m oxr_starter.generate_demo ~/some-page.png
 ```
 src/oxr_starter/
 ├── load_model.py       # 加载 + 显存报告
-└── generate_demo.py    # 单图推理
+├── generate_demo.py    # 单图推理
+└── parse_pdf.py        # PDF 逐页解析 → Markdown
 ```
