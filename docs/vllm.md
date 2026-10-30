@@ -97,7 +97,37 @@ curl -s http://127.0.0.1:8001/v1/chat/completions \
       "max_tokens":512,"temperature":0}'
 ```
 
-## 常驻服务（可选）
+## 常驻服务：用脚本管理（推荐）
+
+`scripts/oxr-vllm.sh` 把下面这一整套封装好了：
+
+```bash
+./scripts/oxr-vllm.sh check       # 检查 venv / 模型 / 插件 / 头文件 / 端口
+./scripts/oxr-vllm.sh install     # 生成单元 + 开机自启 + 等待就绪
+./scripts/oxr-vllm.sh status      # systemctl status
+./scripts/oxr-vllm.sh logs [行数]  # journalctl
+./scripts/oxr-vllm.sh restart | stop | start
+./scripts/oxr-vllm.sh run         # 前台直接跑（调试，不经 systemd）
+./scripts/oxr-vllm.sh uninstall
+```
+
+`install` 会**根据当前环境自动生成**单元文件（模型快照路径、venv 路径、头文件路径
+都写成实际值），所以换机器/换缓存目录时不用手改配置。
+
+可用环境变量覆盖：
+
+| 变量 | 默认 | 作用 |
+|---|---|---|
+| `OXR_VLLM_VENV` | `~/space/python/oxr-vllm` | vLLM 环境 |
+| `HF_HOME` | `~/cot/cache/huggingface` | 模型缓存 |
+| `OXR_VLLM_PORT` | `8001` | 服务端口 |
+| `OXR_PY_HEADERS` | `~/cot/lib/python_3.12.16_*/include/python3.12` | Python 头文件 |
+| `OXR_GPU_UTIL` | `0.55` | 显存占用比例 |
+| `OXR_MAX_LEN` | `8192` | 上下文长度 |
+
+实测安装到就绪约 **48 秒**。
+
+## 常驻服务：手写单元（参考）
 
 临时验证用 `systemd-run`；要常驻就写用户单元：
 

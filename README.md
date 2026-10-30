@@ -61,6 +61,16 @@ uv run python -m oxr_starter.layout doc.pdf --page 3
 uv run python -m oxr_starter.layout doc.pdf --page 3 --parse-tables
 ```
 
+## vLLM 服务
+
+```bash
+./scripts/oxr-vllm.sh install    # 安装成 systemd 用户服务并启动
+./scripts/oxr-vllm.sh check      # 环境自检
+./scripts/oxr-vllm.sh logs       # 看日志
+```
+
+详见 [docs/vllm.md](docs/vllm.md)。服务就绪后即可 `--backend vllm` 调用。
+
 ## 后端与并发
 
 | 参数 | 取值 | 说明 |
