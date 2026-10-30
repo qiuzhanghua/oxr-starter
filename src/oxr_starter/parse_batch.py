@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import time
 from pathlib import Path
 
@@ -46,6 +47,7 @@ def main() -> None:
                     help="local=进程内加载；vllm=调用已启动的 vLLM 服务")
     ap.add_argument("--base-url", default="http://127.0.0.1:8001/v1")
     ap.add_argument("--workers", type=int, default=1, help="并发页数（仅 vllm）")
+    ap.add_argument("--json", action="store_true", help="每个文件额外输出 .json")
     ap.add_argument("--no-resume", action="store_true",
                     help="忽略页码级断点缓存，重新识别所有页")
     ap.add_argument("--parse-tables", action="store_true",
@@ -107,12 +109,20 @@ def main() -> None:
                 if i not in results:
                     parts.append(f"\n<!-- 第 {i} 页 识别失败，重跑可续传 -->\n")
                     continue
-                text, nt = results[i]
-                tables_total += nt
+                text, tbls = results[i]
+                tables_total += len(tbls)
                 parts.append(f"\n<!-- 第 {i} 页 -->\n\n{text}\n")
             if failed:
                 raise RuntimeError(f"{len(failed)} 页失败: {failed}")
             dst.write_text("".join(parts), encoding="utf-8")
+            if args.json:
+                from .parse_pdf import build_json
+
+                doc_json = build_json(pdf, indices, results, {},
+                                      {"dpi": args.dpi, "backend": backend.name,
+                                       "workers": workers})
+                dst.with_suffix(".json").write_text(
+                    json.dumps(doc_json, ensure_ascii=False, indent=2), encoding="utf-8")
             dt = time.time() - t1
             extra = f"，表格 {tables_total}" if args.parse_tables else ""
             print(f"[{n}/{len(pdfs)}] {rel} → {len(indices)} 页，{dt:.1f}s{extra}")

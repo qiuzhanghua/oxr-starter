@@ -72,6 +72,42 @@ uv run python -m oxr_starter.layout doc.pdf --page 3 --parse-tables
 并发实现：PyMuPDF 渲染留在主线程（非线程安全），识别请求在线程池里并行发出；
 表格裁剪后同样并发识别。每批最多 `workers` 张图驻留内存。
 
+## JSON 结构化输出
+
+`--json` 在生成 markdown 的同时，额外产出同名 `.json`：
+
+```bash
+uv run python -m oxr_starter.parse_pdf doc.pdf --backend vllm \
+  --parse-tables --extract-images --json
+# → doc.md + doc.json
+```
+
+结构：
+
+```json
+{
+  "source": "doc.pdf",
+  "pages": [
+    {
+      "page": 3,
+      "markdown": "表1：三种编译引擎的对比…",
+      "tables": [{"bbox": [195, 156, 399, 225], "html": "<table>…</table>"}],
+      "images": [{"file": "p0003-img01.png", "bbox": [...], "width": 310, "height": 220}],
+      "failed": false
+    }
+  ],
+  "meta": {"dpi": 150, "backend": "vllm", "workers": 2,
+           "parse_tables": true, "elapsed_sec": 5.6}
+}
+```
+
+- `markdown`：该页的 markdown（与 `.md` 文件里的内容一致）
+- `tables`：表格的区域坐标与独立识别的 HTML
+- `images`：提取出的图片文件与坐标（需 `--extract-images`）
+- `failed`：该页是否识别失败（便于下游决定是否重试）
+
+断点缓存也会保留表格信息（`pNNNN.json`），续跑时 JSON 里的 bbox 不会丢。
+
 ## 图片提取
 
 ```bash
