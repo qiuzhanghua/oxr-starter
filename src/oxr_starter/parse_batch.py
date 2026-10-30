@@ -16,7 +16,7 @@ import torch
 from PIL import Image
 from transformers import AutoModelForCausalLM
 
-from .parse_pdf import MODEL_ID, PROMPT_WHOLE_PAGE, to_cuda
+from .parse_pdf import MODEL_ID, PROMPT_WHOLE_PAGE, replace_tables, to_cuda
 
 DEFAULT_PATTERN = "*.pdf"
 
@@ -60,6 +60,8 @@ def main() -> None:
     ap.add_argument("--pages", type=str, default="", help="每份只处理指定页，如 1-3")
     ap.add_argument("--skip-existing", action="store_true", help="跳过已存在且不为空的 .md")
     ap.add_argument("--limit", type=int, default=0, help="最多处理几个文件（调试用）")
+    ap.add_argument("--parse-tables", action="store_true",
+                    help="表格区域单独精细识别（每张表多一次生成，较慢）")
     args = ap.parse_args()
 
     root = args.input.expanduser().resolve()
@@ -112,13 +114,19 @@ def main() -> None:
                        if not page_filter or i in page_filter]
             parts = [f"# {pdf.stem}\n"]
             t1 = time.time()
+            tables_total = 0
             for i in indices:
-                img = render_page(doc[i - 1], args.dpi)
+                page = doc[i - 1]
+                img = render_page(page, args.dpi)
                 text = parse_page(model, img, args.max_tokens).strip()
+                if args.parse_tables:
+                    text, n = replace_tables(model, page, text, args.dpi, args.max_tokens)
+                    tables_total += n
                 parts.append(f"\n<!-- 第 {i} 页 -->\n\n{text}\n")
             dst.write_text("".join(parts), encoding="utf-8")
             dt = time.time() - t1
-            print(f"[{n}/{len(pdfs)}] {rel} → {len(indices)} 页，{dt:.1f}s")
+            extra = f"，表格 {tables_total}" if args.parse_tables else ""
+            print(f"[{n}/{len(pdfs)}] {rel} → {len(indices)} 页，{dt:.1f}s{extra}")
             done += 1
         except Exception as e:  # 单个失败不影响其余文件
             print(f"[{n}/{len(pdfs)}] 失败: {rel}: {type(e).__name__}: {e}")

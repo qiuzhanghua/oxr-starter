@@ -47,6 +47,7 @@ uv run python -m oxr_starter.parse_pdf doc.pdf --parse-tables
 # 批量：目录下所有 PDF → Markdown
 uv run python -m oxr_starter.parse_batch ~/papers -o ~/papers/md
 uv run python -m oxr_starter.parse_batch ~/papers --skip-existing --limit 3
+uv run python -m oxr_starter.parse_batch ~/papers --parse-tables   # 表格精细识别
 
 # 版面区域检测 / 表格单独识别
 uv run python -m oxr_starter.layout doc.pdf --page 3
