@@ -44,6 +44,28 @@ uv run python -m oxr_starter.parse_pdf doc.pdf --pages 1-3,7 --dpi 150
 # 批量：目录下所有 PDF → Markdown
 uv run python -m oxr_starter.parse_batch ~/papers -o ~/papers/md
 uv run python -m oxr_starter.parse_batch ~/papers --skip-existing --limit 3
+
+# 版面区域检测 / 表格单独识别
+uv run python -m oxr_starter.layout doc.pdf --page 3
+uv run python -m oxr_starter.layout doc.pdf --page 3 --parse-tables
+```
+
+## 关于版面分析
+
+OXR 本体**不输出布局框**：用官方 layout 提示词实测，模型仍然返回整页内容。
+真正的版面检测是独立的 **D-FINE Stage-2 B2** 模型（`layout_analysis/last.pth`，
+12 类），需要官方 38 个文件的 FastAPI 服务（`services/layout_analyze/`）。
+
+本项目的折中方案：用 **PyMuPDF** 的结构信息检测区域（文本块 / 图片 / 表格），
+再对**表格区域**裁剪后单独送给模型，用官方表格提示词识别。
+
+实测效果（`ctex-demo.pdf` 第 3 页，4 行 × 3 列表格）：
+
+```html
+<table><tr><td>引擎</td><td>适用场景</td><td>中文支持</td></tr>
+<tr><td>pdflatex</td><td>纯英文、老模板</td><td>弱</td></tr>
+<tr><td>xelatex</td><td>中文、字体自由</td><td>强</td></tr>
+<tr><td>lualatex</td><td>复杂脚本、Lua 扩展</td><td>强</td></tr></table>
 ```
 
 ## 性能（本机实测）
@@ -82,5 +104,6 @@ src/oxr_starter/
 ├── load_model.py       # 加载 + 显存报告
 ├── generate_demo.py    # 单图推理
 ├── parse_pdf.py        # PDF 逐页解析 → Markdown
-└── parse_batch.py      # 目录批量处理
+├── parse_batch.py      # 目录批量处理
+└── layout.py           # 区域检测 + 表格精细识别
 ```
