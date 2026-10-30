@@ -40,6 +40,10 @@ uv run python -m oxr_starter.generate_demo ~/some-page.png
 # PDF → Markdown（逐页渲染后识别）
 uv run python -m oxr_starter.parse_pdf doc.pdf -o doc.md
 uv run python -m oxr_starter.parse_pdf doc.pdf --pages 1-3,7 --dpi 150
+
+# 批量：目录下所有 PDF → Markdown
+uv run python -m oxr_starter.parse_batch ~/papers -o ~/papers/md
+uv run python -m oxr_starter.parse_batch ~/papers --skip-existing --limit 3
 ```
 
 ## 性能（本机实测）
@@ -77,5 +81,6 @@ PDF 每页约 28 秒，主要花在视觉 token 上的自回归生成。想加�
 src/oxr_starter/
 ├── load_model.py       # 加载 + 显存报告
 ├── generate_demo.py    # 单图推理
-└── parse_pdf.py        # PDF 逐页解析 → Markdown
+├── parse_pdf.py        # PDF 逐页解析 → Markdown
+└── parse_batch.py      # 目录批量处理
 ```
