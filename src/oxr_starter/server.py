@@ -41,6 +41,7 @@ from urllib.parse import urlsplit
 from PIL import Image, ImageDraw
 
 from . import devices
+from .backend import resolve_max_pixels
 
 PROMPT_WARMUP = "Recognize the whole page content of the image."
 
@@ -175,14 +176,16 @@ class ThreadRunner:
 # --------------------------------------------------------------------------- #
 # 执行器：多进程（instances>1）
 # --------------------------------------------------------------------------- #
-def _worker_main(in_q, out_q, model_id: str, device: str, dtype: str) -> None:
+def _worker_main(in_q, out_q, model_id: str, device: str, dtype: str,
+                 max_pixels: int | None = None) -> None:
     """子进程：加载模型 → 预热 → 循环取任务。"""
     from .backend import LocalBackend
 
     pid = os.getpid()
     t0 = time.time()
     try:
-        backend = LocalBackend(model_id=model_id, device=device, dtype=dtype)
+        backend = LocalBackend(model_id=model_id, device=device, dtype=dtype,
+                               max_pixels=max_pixels)
         warm = warmup(backend)
     except Exception as e:  # noqa: BLE001 - 子进程要把启动失败报回主进程
         out_q.put(("fail", pid, f"{type(e).__name__}: {e}", 0.0))
@@ -211,6 +214,7 @@ class ProcessRunner:
         model_id: str,
         device: str,
         dtype: str,
+        max_pixels: int | None = None,
         start_timeout: float = 300.0,
     ):
         ctx = mp.get_context("spawn")
@@ -229,7 +233,7 @@ class ProcessRunner:
         self.procs = [
             ctx.Process(
                 target=_worker_main,
-                args=(self.in_q, self.out_q, model_id, device, dtype),
+                args=(self.in_q, self.out_q, model_id, device, dtype, max_pixels),
                 daemon=True,
             )
             for _ in range(instances)
@@ -467,6 +471,12 @@ def main() -> None:
     ap.add_argument("--device", default="auto", help="auto / cuda / mps / cpu")
     ap.add_argument("--dtype", default="auto", help="auto / bf16 / fp16 / fp32")
     ap.add_argument(
+        "--max-pixels",
+        type=int,
+        default=0,
+        help="视觉编码最大像素数（如 1200000）；0=模型默认 1344×1792",
+    )
+    ap.add_argument(
         "--instances",
         type=int,
         default=1,
@@ -480,15 +490,21 @@ def main() -> None:
     dev = devices.pick_device(args.device)
     dtype = devices.resolve_dtype(dev, args.dtype)
     dtype_name = str(dtype).replace("torch.", "")
-    _log(f"设备 {devices.describe(dev, dtype)}；实例 {args.instances}")
+    try:
+        max_pixels = resolve_max_pixels(args.max_pixels)
+    except ValueError as e:
+        raise SystemExit(str(e)) from e
+    px_info = f"；max_pixels {max_pixels}" if max_pixels else ""
+    _log(f"设备 {devices.describe(dev, dtype)}；实例 {args.instances}{px_info}")
 
     t0 = time.time()
     if args.instances > 1:
-        runner = ProcessRunner(args.instances, args.model, dev, dtype_name)
+        runner = ProcessRunner(args.instances, args.model, dev, dtype_name, max_pixels)
     else:
         from .backend import LocalBackend
 
-        backend = LocalBackend(model_id=args.model, device=dev, dtype=dtype_name)
+        backend = LocalBackend(model_id=args.model, device=dev, dtype=dtype_name,
+                               max_pixels=max_pixels)
         runner = ThreadRunner(backend, warmup_first=not args.no_warmup)
     _log(f"就绪（{time.time() - t0:.1f}s）→ http://{args.host}:{args.port}/v1")
 

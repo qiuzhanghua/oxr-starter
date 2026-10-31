@@ -20,6 +20,7 @@ import torch
 from PIL import Image, ImageDraw
 
 from . import devices
+from .backend import resolve_max_pixels
 
 MODEL_ID = "SoMarkAI/OXR-1.0"
 
@@ -56,7 +57,14 @@ def main() -> None:
     ap.add_argument("--device", default="auto", help="auto / cuda / mps / cpu")
     ap.add_argument("--dtype", default="auto", help="auto / bf16 / fp16 / fp32")
     ap.add_argument("--max-tokens", type=int, default=512)
+    ap.add_argument("--max-pixels", type=int, default=0,
+                    help="视觉编码最大像素数（如 1200000）；0=模型默认 1344×1792")
     args = ap.parse_args()
+
+    try:
+        max_pixels = resolve_max_pixels(args.max_pixels)
+    except ValueError as e:
+        raise SystemExit(str(e)) from e
 
     from transformers import AutoModelForCausalLM
 
@@ -65,7 +73,8 @@ def main() -> None:
     print(f"设备: {devices.describe(dev, dtype)}")
 
     img = Image.open(args.image).convert("RGB") if args.image else make_sample_image()
-    print(f"输入图: {img.size}")
+    px_info = f"，max_pixels {max_pixels}" if max_pixels else ""
+    print(f"输入图: {img.size}{px_info}")
 
     t0 = time.time()
     model = AutoModelForCausalLM.from_pretrained(
@@ -86,7 +95,8 @@ def main() -> None:
 
     tdev = devices.torch_device(dev)
     t1 = time.time()
-    input_ids, pixel_values, grid_thws = model.preprocess_inputs(messages)
+    preprocess_kwargs = {} if max_pixels is None else {"max_pixels": max_pixels}
+    input_ids, pixel_values, grid_thws = model.preprocess_inputs(messages, **preprocess_kwargs)
     pixel_values = devices.to_device(pixel_values, tdev)
     grid_thws = devices.to_device(grid_thws, tdev)
     input_ids = input_ids.to(tdev)

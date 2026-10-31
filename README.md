@@ -47,6 +47,9 @@ uv run python -m oxr_starter.parse_pdf doc.pdf --pages 1-3,7 --dpi 150
 # 表格区域精细识别（替换整页结果里的 <table>）
 uv run python -m oxr_starter.parse_pdf doc.pdf --parse-tables
 
+# 视觉编码上限（默认 1344×1792；MPS 上降到 1200000 可显著提速）
+uv run python -m oxr_starter.parse_pdf doc.pdf --max-pixels 1200000
+
 # 走 vLLM 服务（前提：vLLM 已启动，见 docs/vllm.md）
 uv run python -m oxr_starter.parse_pdf doc.pdf --backend vllm
 uv run python -m oxr_starter.parse_batch ~/papers --backend vllm --parse-tables
@@ -130,6 +133,10 @@ uv run python -m oxr_starter.parse_pdf doc.pdf --backend vllm --workers 2 --pars
 实测（M1 Max 32 核 GPU / 64 GB）：小图 1.96 s / 128 tok；A4 整页 500 tok 约 9 s；
 真实双栏论文页（自然停止 2221 tok）31.5 s、峰值 6.2 GB、约 71 tok/s。
 
+视觉编码约占固定开销 75%，且耗时随像素数平方增长。MPS 上想更快可以降
+`--max-pixels`（默认行为不变）：2.4M→1.2M 时视觉编码 2.8 s→1.0 s、整页 36 s→29 s，
+同一页输出相似度 0.992。实测表与注意事项见 [docs/mac.md](docs/mac.md)。
+
 并发注意：MPS 单流已基本吃满 GPU，**同进程多线程无收益**；要并行得用多进程
 （`--instances 3` 约 1.38×，每实例多占 3.5–6 GB）。所以 `--workers` 只保证排队不报错。
 
@@ -144,6 +151,8 @@ uv run python -m oxr_starter.parse_pdf doc.pdf --backend vllm --workers 2 --pars
 | `--workers` | 默认 1 | 并发页数，**仅 vllm 生效**；local 自动忽略 |
 | `--device` | `auto` / `cuda` / `mps` / `cpu` | 仅 local 生效；默认 `auto` = cuda→mps→cpu |
 | `--dtype` | `auto` / `bf16` / `fp16` / `fp32` | 默认：CUDA→bf16，MPS→fp16，CPU→fp32 |
+| `--max-pixels` | 默认 0（模型值 1344×1792）| 视觉编码最大像素数；视觉耗时随 token 数平方增长，MPS 上降档收益明显 |
+| `OXR_MAX_PIXELS` | 环境变量 | 与 `--max-pixels` 相同，CLI / Python API / 服务端全局生效 |
 
 并发实现：PyMuPDF 渲染留在主线程（非线程安全），识别请求在线程池里并行发出；
 表格裁剪后同样并发识别。每批最多 `workers` 张图驻留内存。
@@ -303,4 +312,6 @@ src/oxr_starter/
 scripts/
 ├── oxr-vllm.sh         # Linux：systemd 起 vLLM
 └── oxr-mac.sh          # macOS：launchd 起 oxr_starter.server
+
+tests/                  # pytest 用例（假后端 + 合成 PDF，不加载模型）
 ```

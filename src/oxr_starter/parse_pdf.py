@@ -212,6 +212,8 @@ def main() -> None:
     ap.add_argument("--base-url", default="http://127.0.0.1:8001/v1")
     ap.add_argument("--device", default="auto", help="local 后端的设备：auto / cuda / mps / cpu")
     ap.add_argument("--dtype", default="auto", help="local 后端的精度：auto / bf16 / fp16 / fp32")
+    ap.add_argument("--max-pixels", type=int, default=0,
+                    help="视觉编码最大像素数（如 1200000）；0=模型默认 1344×1792。降低可换速度")
     ap.add_argument("--workers", type=int, default=1, help="并发页数（仅 vllm）")
     ap.add_argument("--parse-tables", action="store_true")
     ap.add_argument("--extract-images", action="store_true")
@@ -230,15 +232,18 @@ def main() -> None:
 
     t0 = time.time()
     try:
-        backend = make_backend(args.backend, args.base_url, args.device, args.dtype)
-    except RuntimeError as e:
+        backend = make_backend(args.backend, args.base_url, args.device, args.dtype,
+                               args.max_pixels)
+    except (RuntimeError, ValueError) as e:
         raise SystemExit(str(e)) from e
     workers = args.workers if backend.name == "vllm" else 1
     dev_info = ""
     if hasattr(backend, "device"):  # LocalBackend 才有设备概念
         dev_info = f"（{backend.device}/{str(backend.dtype).replace('torch.', '')}）"
+    max_px = getattr(backend, "max_pixels", None)
+    px_info = f"，max_pixels {max_px}" if max_px else ""
     print(f"输入: {args.pdf}（{doc.page_count} 页，处理 {len(indices)} 页，"
-          f"{args.dpi} DPI，后端 {backend.name}{dev_info}，并发 {workers}）")
+          f"{args.dpi} DPI，后端 {backend.name}{dev_info}{px_info}，并发 {workers}）")
     if parts_dir is not None and parts_dir.exists():
         print(f"断点续跑: {parts_dir}（已有 {len(list(parts_dir.glob('p*.md')))} 页）")
 

@@ -121,8 +121,9 @@ class OXRClient:
                  base_url: str = "http://127.0.0.1:8001/v1",
                  workers: int = 1,
                  device: str = "auto",
-                 dtype: str = "auto"):
-        self.backend = make_backend(backend, base_url, device, dtype)
+                 dtype: str = "auto",
+                 max_pixels: int | None = None):
+        self.backend = make_backend(backend, base_url, device, dtype, max_pixels)
         self.workers = workers if self.backend.name == "vllm" else 1
 
     def parse(self, pdf: str | Path, *, dpi: int = 150, max_tokens: int = 2048,
@@ -193,7 +194,9 @@ class OXRClient:
 
 def parse(pdf: str | Path, **kwargs) -> Document:
     """一次性解析：内部创建并丢弃客户端。"""
-    client_kwargs = {k: kwargs.pop(k) for k in ("backend", "base_url", "workers", "device", "dtype")
+    client_kwargs = {k: kwargs.pop(k)
+                     for k in ("backend", "base_url", "workers", "device", "dtype",
+                               "max_pixels")
                      if k in kwargs}
     with OXRClient(**client_kwargs) as client:
         return client.parse(pdf, **kwargs)

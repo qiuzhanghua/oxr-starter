@@ -42,6 +42,9 @@ uv run python -m oxr_starter.generate_demo ~/page.png --max-tokens 1024
 # 3a) 直接解析（进程内，最简单）
 uv run python -m oxr_starter.parse_pdf doc.pdf -o out/doc.md --parse-tables
 
+# 想更快：降低视觉编码上限（默认 1344×1792；1200000 约快 1.25×，质量略降）
+uv run python -m oxr_starter.parse_pdf doc.pdf -o out/doc.md --max-pixels 1200000
+
 # 3b) 起服务再用客户端（等价于原来的 vLLM 用法）
 ./scripts/oxr-mac.sh start            # launchd 托管，等就绪
 uv run python -m oxr_starter.parse_pdf doc.pdf -o out/doc.md \
@@ -77,6 +80,33 @@ fp16 单元效率很高。
 ```
 
 所以 300 tok 的页约 6.8 s，500 tok 约 9 s，2200 tok 约 28 s。
+
+### 视觉编码：瓶颈是 token 数，不是窗口注意力
+
+2026-10-31 复测（同一台 M1 Max，1654×2174 OmniDocBench 论文页）：
+
+| `max_pixels` | ViT grid | 视觉 token | 视觉编码 | 整页生成 | 文本相似度 |
+|---|---|---|---|---|---|
+| 2,408,448（默认）| 110×84 | 9,240 | 2.78 s | 36.4 s | — |
+| 1,200,000 | 78×58 | 4,524 | 0.95 s | 29.2 s | 0.992 |
+| 602,112 | 54×42 | 2,268 | 0.43 s | 27.1 s | 0.971 |
+
+注：整页生成为 greedy、`max_new_tokens=2500`，含视觉编码+prefill+decode；文本相似度
+是与默认档输出的 difflib 字符相似度，只作趋势参考，不等于 OmniDocBench 准确率。
+
+结论：
+
+- 本 checkpoint 的 `vit_config.fullatt_block_indexes` 是 `null`，**27 层全部是全注意力**
+  （每层 9,240 token、约 77 ms），并不存在窗口注意力循环。
+- SDPA 已接近 MPS matmul 上限：单独一次 QK^T 就要 45 ms/layer；query chunk、
+  `torch.compile`、把 head_dim 从 72 补到 80/96/128 都没有收益。
+- 强行打开窗口注意力：vision 1.46 s，但输出崩坏（与基线相似度 0.02），不能采用。
+- **真正有效的是降 token 数**：视觉耗时 ∝ token²（近似），token 数 ∝ 像素数，
+  所以 `--max-pixels` 从 2.4M 降到 1.2M，vision 约快 2.9×，整页约快 1.25×。
+
+`--max-pixels` 默认 0 = 模型默认值，行为不变；需要速度时显式开启。它也可以走
+环境变量 `OXR_MAX_PIXELS`，对 `parse_pdf` / `parse_batch` / Python API / 服务端
+同时生效。
 
 ### 并发（决定服务端怎么配）
 
@@ -142,27 +172,31 @@ curl -s localhost:8001/health | python3 -m json.tool
 |---|---|
 | `devices.py` | **新增**。设备选择 / dtype / 显存报告 / `PeakTracker`（MPS 无峰值 API，轮询采样）|
 | `backend.py` | `LocalBackend` 走 `devices`；删掉 `_to_cuda`；新增 `close()` |
-| `server.py` | **新增**。OpenAI 兼容服务，`ThreadRunner` / `ProcessRunner` |
+| `server.py` | **新增**。OpenAI 兼容服务，`ThreadRunner` / `ProcessRunner`；透传 `--max-pixels` |
 | `load_model.py` | 重写：设备信息 + 峰值显存 + 剩余上限 |
 | `generate_demo.py` | 重写：`--device/--dtype/--max-tokens`，去掉 `sys.argv` 硬编码 |
 | `layout.py` | 去掉重复的模型加载 / `to_cuda`，改调 `LocalBackend`；区域检测本身不需要 GPU |
-| `parse_pdf.py` / `parse_batch.py` / `api.py` | 新增 `--device` / `--dtype` 并一路透传；`close()` 真正释放显存 |
+| `parse_pdf.py` / `parse_batch.py` / `api.py` | 新增 `--device` / `--dtype` / `--max-pixels` 并一路透传；`close()` 真正释放显存 |
 | `scripts/oxr-mac.sh` | **新增**。launchd 管理 |
 
 ---
 
 ## 7. 已知风险 / 注意
 
-1. **视觉编码 2.63 s/页**（占固定开销 75%）因为没 flash-attn，走 Python 逐层循环。
-   想要更快就把 window-attn 向量化成 block-diagonal mask + 一次 SDPA，预计省 0.5–1 s/页。
-   *当前未做*——先保证功能一致。
+1. **视觉编码 2.7–2.8 s/页，瓶颈是 token 数，不是窗口注意力**。本 checkpoint 的
+   `fullatt_block_indexes: null`，27 层全部是全注意力（每层 9,240 token、约 77 ms），
+   SDPA 已接近 MPS matmul 上限（单步 QK^T 就要 45 ms；chunk / compile / 补 head_dim
+   都无收益）。实测强行改窗口注意力 vision 降到 1.46 s，但输出崩坏（相似度 0.02），
+   不可用。可控杠杆是 `--max-pixels`：2.4M→1.2M 时 vision 2.8→1.0 s、整页 36→29 s，
+   同一页文本相似度 0.992。
 2. **MPS 没有 `max_memory_allocated()`**：峰值靠轮询采样（`PeakTracker`，50 ms 间隔），
    极端短峰值可能漏采。要严格上限就设 `OXR_MPS_MEM_FRACTION=0.75`。
 3. **超长页**：2221 tok 已占 6.2 GB；把 `--max-tokens` 拉到 8192 且页面很密时要当心
    整机内存（`recommended_max_memory` 是 51.8 GB，不设比例理论上能吃满）。
 4. **首次调用慢**：Metal shader 编译约 3–4 s，服务启动已预热，脚本里直接跑第一次会慢。
 5. **`use_cache: false` 写在 config 里，但实测走了 KV cache**（transformers 5.22 行为）。
-   升级 transformers 后速度可能变，建议在测试里锁住 tok/s 下限。
+   升级 transformers 后速度可能变；`OXR_SLOW=1 uv run pytest -m slow` 会跑真实模型，
+   并用 `OXR_MAX_SECONDS`（默认 600 s）兜住明显的单页耗时回退。
 6. **fp16 与 bf16 输出逐字节一致**，但 fp16 快 16%。极长上下文若担心数值，切 `--dtype bf16`。
 7. **并发别指望 `--workers 8` 变快**：单流已饱和，`workers` 只是让请求排队而不报错。
 8. **模型 `layout_analysis/last.pth`（D-FINE）未接入**：那是官方 38 文件 FastAPI 服务的
