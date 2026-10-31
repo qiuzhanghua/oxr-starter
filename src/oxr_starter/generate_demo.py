@@ -3,23 +3,23 @@
 走模型自带的 preprocess_inputs + generate，不依赖 vendored processor：
     messages -> apply_chat_template -> input_ids/pixel_values/grid_thws -> generate
 
-运行（必须走 systemd 服务，沙箱里看不到 GPU）：
-    systemd-run --user --collect --wait --quiet --unit=oxr-demo \
-      --working-directory=/home/q/space/python/oxr-starter \
-      --setenv=HF_HOME=/home/q/cot/cache/huggingface \
-      --setenv=HF_HUB_OFFLINE=1 \
-      /home/q/space/python/oxr-starter/.venv/bin/python -m oxr_starter.generate_demo [图片路径]
+设备：自动选 CUDA → MPS → CPU，可用 `--device` / `--dtype` 覆盖。
+
+    uv run python -m oxr_starter.generate_demo
+    uv run python -m oxr_starter.generate_demo ~/page.png --device mps
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 from pathlib import Path
 
 import torch
 from PIL import Image, ImageDraw
-from transformers import AutoModelForCausalLM
+
+from . import devices
 
 MODEL_ID = "SoMarkAI/OXR-1.0"
 
@@ -51,17 +51,28 @@ def make_sample_image() -> Image.Image:
 
 
 def main() -> None:
-    if not torch.cuda.is_available():
-        raise SystemExit("CUDA 不可用：请在 systemd 服务里运行")
+    ap = argparse.ArgumentParser(description="OXR 单图推理")
+    ap.add_argument("image", nargs="?", type=Path, help="图片路径（缺省用内置样例）")
+    ap.add_argument("--device", default="auto", help="auto / cuda / mps / cpu")
+    ap.add_argument("--dtype", default="auto", help="auto / bf16 / fp16 / fp32")
+    ap.add_argument("--max-tokens", type=int, default=512)
+    args = ap.parse_args()
 
-    img = Image.open(Path(sys.argv[1])).convert("RGB") if len(sys.argv) > 1 else make_sample_image()
+    from transformers import AutoModelForCausalLM
+
+    dev = devices.pick_device(args.device)
+    dtype = devices.resolve_dtype(dev, args.dtype)
+    print(f"设备: {devices.describe(dev, dtype)}")
+
+    img = Image.open(args.image).convert("RGB") if args.image else make_sample_image()
     print(f"输入图: {img.size}")
 
     t0 = time.time()
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID, trust_remote_code=True, dtype=torch.bfloat16,
-        device_map="cuda:0", low_cpu_mem_usage=True,
+        MODEL_ID, trust_remote_code=True, dtype=dtype,
+        low_cpu_mem_usage=True, **devices.device_kwargs(dev),
     )
+    model = devices.move_model(model, dev)
     model.eval()
     print(f"模型就绪（{time.time() - t0:.1f}s）")
 
@@ -73,38 +84,35 @@ def main() -> None:
         ],
     }]
 
+    tdev = devices.torch_device(dev)
     t1 = time.time()
     input_ids, pixel_values, grid_thws = model.preprocess_inputs(messages)
-    def to_cuda(x):
-        if x is None:
-            return None
-        if isinstance(x, (tuple, list)):
-            return torch.cat(list(x), dim=0).to("cuda")
-        return x.to("cuda")
-
-    pixel_values = to_cuda(pixel_values)
-    grid_thws = to_cuda(grid_thws)
-    input_ids = input_ids.to("cuda")
+    pixel_values = devices.to_device(pixel_values, tdev)
+    grid_thws = devices.to_device(grid_thws, tdev)
+    input_ids = input_ids.to(tdev)
     print(f"预处理完成：{input_ids.shape[-1]} tokens（{time.time() - t1:.1f}s）")
 
-    t2 = time.time()
-    with torch.inference_mode():
-        out = model.generate(
-            inputs=input_ids,
-            pixel_values=pixel_values,
-            grid_thws=grid_thws,
-            max_new_tokens=512,
-            do_sample=False,
-        )
-    dt = time.time() - t2
+    with devices.PeakTracker(dev) as peak:
+        t2 = time.time()
+        with torch.inference_mode():
+            out = model.generate(
+                inputs=input_ids,
+                pixel_values=pixel_values,
+                grid_thws=grid_thws,
+                max_new_tokens=args.max_tokens,
+                do_sample=False,
+            )
+        if dev == devices.MPS:
+            torch.mps.synchronize()
+        dt = time.time() - t2
 
     new_ids = out[0]  # 模型只返回新生成的 token（不含 prompt）
     text = model.text_tokenizer.decode(new_ids, skip_special_tokens=True)
     print(f"生成：{len(new_ids)} tokens，{dt:.1f}s（{len(new_ids)/max(dt,1e-6):.1f} tok/s）")
-    print(f"显存峰值: {round(torch.cuda.max_memory_allocated()/1024**3, 2)} GB")
+    print(f"显存: {'无（CPU）' if dev == devices.CPU else f'峰值 {peak.peak_gb} GB'}")
     print("---- 输出 ----")
     print(text)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -210,6 +210,8 @@ def main() -> None:
     ap.add_argument("--pages", type=str, default="", help="只处理指定页，如 1-3,7")
     ap.add_argument("--backend", choices=["local", "vllm"], default="local")
     ap.add_argument("--base-url", default="http://127.0.0.1:8001/v1")
+    ap.add_argument("--device", default="auto", help="local 后端的设备：auto / cuda / mps / cpu")
+    ap.add_argument("--dtype", default="auto", help="local 后端的精度：auto / bf16 / fp16 / fp32")
     ap.add_argument("--workers", type=int, default=1, help="并发页数（仅 vllm）")
     ap.add_argument("--parse-tables", action="store_true")
     ap.add_argument("--extract-images", action="store_true")
@@ -227,10 +229,16 @@ def main() -> None:
     parts_dir = None if args.no_resume else out_path.parent / f"{out_path.stem}.parts"
 
     t0 = time.time()
-    backend = make_backend(args.backend, args.base_url)
+    try:
+        backend = make_backend(args.backend, args.base_url, args.device, args.dtype)
+    except RuntimeError as e:
+        raise SystemExit(str(e)) from e
     workers = args.workers if backend.name == "vllm" else 1
+    dev_info = ""
+    if hasattr(backend, "device"):  # LocalBackend 才有设备概念
+        dev_info = f"（{backend.device}/{str(backend.dtype).replace('torch.', '')}）"
     print(f"输入: {args.pdf}（{doc.page_count} 页，处理 {len(indices)} 页，"
-          f"{args.dpi} DPI，后端 {backend.name}，并发 {workers}）")
+          f"{args.dpi} DPI，后端 {backend.name}{dev_info}，并发 {workers}）")
     if parts_dir is not None and parts_dir.exists():
         print(f"断点续跑: {parts_dir}（已有 {len(list(parts_dir.glob('p*.md')))} 页）")
 

@@ -46,6 +46,8 @@ def main() -> None:
     ap.add_argument("--backend", choices=["local", "vllm"], default="local",
                     help="local=进程内加载；vllm=调用已启动的 vLLM 服务")
     ap.add_argument("--base-url", default="http://127.0.0.1:8001/v1")
+    ap.add_argument("--device", default="auto", help="local 后端的设备：auto / cuda / mps / cpu")
+    ap.add_argument("--dtype", default="auto", help="local 后端的精度：auto / bf16 / fp16 / fp32")
     ap.add_argument("--workers", type=int, default=1, help="并发页数（仅 vllm）")
     ap.add_argument("--json", action="store_true", help="每个文件额外输出 .json")
     ap.add_argument("--no-resume", action="store_true",
@@ -80,8 +82,14 @@ def main() -> None:
     print(f"找到 {len(pdfs)} 个文件")
 
     t0 = time.time()
-    backend = make_backend(args.backend, args.base_url)
-    print(f"后端就绪: {backend.name}（{time.time() - t0:.1f}s）\n")
+    try:
+        backend = make_backend(args.backend, args.base_url, args.device, args.dtype)
+    except RuntimeError as e:
+        raise SystemExit(str(e)) from e
+    dev_info = ""
+    if hasattr(backend, "device"):  # LocalBackend 才有设备概念
+        dev_info = f"（{backend.device}/{str(backend.dtype).replace('torch.', '')}）"
+    print(f"后端就绪: {backend.name}{dev_info}（{time.time() - t0:.1f}s）\n")
 
     done, skipped, failed = 0, 0, 0
     for n, pdf in enumerate(pdfs, 1):

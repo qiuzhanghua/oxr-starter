@@ -5,6 +5,8 @@
 38 个文件的 FastAPI 服务）。本项目改用 PyMuPDF 的结构信息做区域检测，
 对表格区域单独用官方表格提示词识别，从而提升表格准确率。
 
+区域检测本身只依赖 PyMuPDF，**不需要 GPU**；只有 `--parse-tables` 才加载模型。
+
 用法：
     uv run python -m oxr_starter.layout doc.pdf                 # 打印检测到的区域
     uv run python -m oxr_starter.layout doc.pdf --parse-tables  # 只识别表格区域
@@ -17,20 +19,9 @@ import json
 from pathlib import Path
 
 import pymupdf
-import torch
 from PIL import Image
-from transformers import AutoModelForCausalLM
 
-MODEL_ID = "SoMarkAI/OXR-1.0"
 PROMPT_TABLE = "Recognize the table of the image into html format."
-
-
-def to_cuda(x):
-    if x is None:
-        return None
-    if isinstance(x, (tuple, list)):
-        return torch.cat(list(x), dim=0).to("cuda")
-    return x.to("cuda")
 
 
 def detect_regions(page: pymupdf.Page) -> list[dict]:
@@ -65,26 +56,6 @@ def crop(page: pymupdf.Page, box: list[int], dpi: int) -> Image.Image:
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
 
-def recognize_table(model, image: Image.Image, max_tokens: int = 1024) -> str:
-    messages = [{
-        "role": "user",
-        "content": [
-            {"type": "image", "image": image},
-            {"type": "text", "text": PROMPT_TABLE},
-        ],
-    }]
-    input_ids, pixel_values, grid_thws = model.preprocess_inputs(messages)
-    with torch.inference_mode():
-        out = model.generate(
-            inputs=input_ids.to("cuda"),
-            pixel_values=to_cuda(pixel_values),
-            grid_thws=to_cuda(grid_thws),
-            max_new_tokens=max_tokens,
-            do_sample=False,
-        )
-    return model.text_tokenizer.decode(out[0], skip_special_tokens=True).strip()
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description="PDF 区域检测 / 表格识别")
     ap.add_argument("pdf", type=Path)
@@ -92,6 +63,9 @@ def main() -> None:
     ap.add_argument("--dpi", type=int, default=200, help="裁剪区域渲染 DPI")
     ap.add_argument("--parse-tables", action="store_true", help="对表格区域做 OXR 识别")
     ap.add_argument("--json", action="store_true", help="输出区域 JSON")
+    ap.add_argument("--device", default="auto", help="auto / cuda / mps / cpu")
+    ap.add_argument("--dtype", default="auto", help="auto / bf16 / fp16 / fp32")
+    ap.add_argument("--max-tokens", type=int, default=1024)
     args = ap.parse_args()
 
     doc = pymupdf.open(args.pdf)
@@ -108,18 +82,17 @@ def main() -> None:
 
     tables = [r for r in regions if r["type"] == "table"]
     if args.parse_tables and tables:
-        if not torch.cuda.is_available():
-            raise SystemExit("CUDA 不可用：请在 systemd 服务里运行")
-        model = AutoModelForCausalLM.from_pretrained(
-            MODEL_ID, trust_remote_code=True, dtype=torch.bfloat16,
-            device_map="cuda:0", low_cpu_mem_usage=True,
-        )
-        model.eval()
+        from .backend import LocalBackend
+        from . import devices
+
+        backend = LocalBackend(device=args.device, dtype=args.dtype)
+        print(f"设备: {devices.describe(backend.device, backend.dtype)}", flush=True)
         for i, t in enumerate(tables, 1):
             img = crop(page, t["box"], args.dpi)
-            out = recognize_table(model, img)
+            out = backend.recognize(img, PROMPT_TABLE, args.max_tokens)
             print(f"\n--- 表格 {i} {t['box']} （{img.size[0]}x{img.size[1]}）---")
             print(out)
+        backend.close()
 
 
 if __name__ == "__main__":

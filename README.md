@@ -3,6 +3,9 @@
 在本机（RTX 4090 Laptop 16 GB / CUDA 13.2）用 **transformers** 跑
 [SoMarkAI/OXR-1.0](https://huggingface.co/SoMarkAI/OXR-1.0) 的最小工程。
 
+同一套代码也支持 **Apple Silicon（MPS）**：自动选设备，不需 CUDA 与 vLLM，
+实测比上面 4090 的 transformers 基线快约 4 倍。见 [docs/mac.md](docs/mac.md)。
+
 OXR 是文档解析模型（1.379 B 参数，BF16）：图片/PDF 页面 → Markdown 或 JSON，
 带版面坐标。
 
@@ -109,6 +112,29 @@ with OXRClient(backend="vllm", workers=4) as client:
 
 详见 [docs/vllm.md](docs/vllm.md)。服务就绪后即可 `--backend vllm` 调用。
 
+## Apple Silicon（MPS）
+
+没有 NVIDIA 卡也能跑全部功能：设备自动选 `cuda → mps → cpu`（MPS 用 `float16`），
+vLLM 换成仓库自带的 OpenAI 兼容服务，systemd 换成 launchd。
+
+```bash
+uv run python -m oxr_starter.load_model          # 打印设备与显存（3.5 GB / 1.379 B）
+uv run python -m oxr_starter.generate_demo       # 单图推理
+
+# 想用 --backend vllm --workers 的统一调用方式：起本机服务（协议与 vLLM 一致）
+./scripts/oxr-mac.sh start                       # launchd 托管，等 /health 通过
+uv run python -m oxr_starter.parse_pdf doc.pdf --backend vllm --workers 2 --parse-tables
+./scripts/oxr-mac.sh stop                        # 释放统一内存
+```
+
+实测（M1 Max 32 核 GPU / 64 GB）：小图 1.96 s / 128 tok；A4 整页 500 tok 约 9 s；
+真实双栏论文页（自然停止 2221 tok）31.5 s、峰值 6.2 GB、约 71 tok/s。
+
+并发注意：MPS 单流已基本吃满 GPU，**同进程多线程无收益**；要并行得用多进程
+（`--instances 3` 约 1.38×，每实例多占 3.5–6 GB）。所以 `--workers` 只保证排队不报错。
+
+详见 [docs/mac.md](docs/mac.md)（含成本结构、风险清单与移植细节）。
+
 ## 后端与并发
 
 | 参数 | 取值 | 说明 |
@@ -116,6 +142,8 @@ with OXRClient(backend="vllm", workers=4) as client:
 | `--backend` | `local` / `vllm` | local 进程内加载（3.9 GB 显存）；vllm 走 HTTP 服务 |
 | `--base-url` | 默认 `http://127.0.0.1:8001/v1` | vLLM 服务地址 |
 | `--workers` | 默认 1 | 并发页数，**仅 vllm 生效**；local 自动忽略 |
+| `--device` | `auto` / `cuda` / `mps` / `cpu` | 仅 local 生效；默认 `auto` = cuda→mps→cpu |
+| `--dtype` | `auto` / `bf16` / `fp16` / `fp32` | 默认：CUDA→bf16，MPS→fp16，CPU→fp32 |
 
 并发实现：PyMuPDF 渲染留在主线程（非线程安全），识别请求在线程池里并行发出；
 表格裁剪后同样并发识别。每批最多 `workers` 张图驻留内存。
@@ -261,6 +289,7 @@ PDF 每页约 28 秒，主要花在视觉 token 上的自回归生成。想加�
 
 ```
 src/oxr_starter/
+├── devices.py          # 设备自适应：cuda / mps / cpu + dtype + 显存报告
 ├── load_model.py       # 加载 + 显存报告
 ├── generate_demo.py    # 单图推理
 ├── parse_pdf.py        # PDF 逐页解析 → Markdown
@@ -268,5 +297,10 @@ src/oxr_starter/
 ├── api.py              # Python API：parse() / OXRClient / Document
 ├── layout.py           # 区域检测 + 表格精细识别
 ├── images.py           # 位图提取 + manifest
-└── backend.py          # 后端抽象：local(transformers) / vllm
+├── backend.py          # 后端抽象：local(transformers) / vllm
+└── server.py           # OpenAI 兼容服务（MPS 上的 vLLM 替代品）
+
+scripts/
+├── oxr-vllm.sh         # Linux：systemd 起 vLLM
+└── oxr-mac.sh          # macOS：launchd 起 oxr_starter.server
 ```
