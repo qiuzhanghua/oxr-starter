@@ -42,7 +42,7 @@ def crop_region(page: pymupdf.Page, box, dpi: int) -> Image.Image:
 def table_boxes(page: pymupdf.Page) -> list[list[int]]:
     try:
         return [[round(v) for v in t.bbox] for t in page.find_tables()]
-    except Exception:
+    except Exception:  # noqa: BLE001 - PyMuPDF 检测失败就当没有表格
         return []
 
 
@@ -107,7 +107,7 @@ def process_pages(backend, doc: pymupdf.Document, indices: list[int],
             if js.exists():
                 try:
                     tables = json.loads(js.read_text(encoding="utf-8")).get("tables", [])
-                except Exception:
+                except Exception:  # noqa: BLE001 - 缓存损坏时按空表格处理
                     tables = []
             results[i] = (text, tables)
     else:
@@ -129,7 +129,7 @@ def process_pages(backend, doc: pymupdf.Document, indices: list[int],
             try:
                 text, tables = _parse_one(backend, doc[i - 1], dpi, max_tokens, parse_tables)
                 _record(i, text, tables)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - 单页失败不影响其余页
                 print(f"  ✗ 第 {i} 页失败: {type(e).__name__}: {e}")
                 failed.append(i)
         return results, failed
@@ -147,7 +147,7 @@ def process_pages(backend, doc: pymupdf.Document, indices: list[int],
             for i, f in futures.items():
                 try:
                     texts[i] = f.result().strip()
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - 单页失败不影响其余页
                     print(f"  ✗ 第 {i} 页失败: {type(e).__name__}: {e}")
                     failed.append(i)
 
@@ -162,7 +162,7 @@ def process_pages(backend, doc: pymupdf.Document, indices: list[int],
                     for f in tf:
                         try:
                             htmls.append(f.result().strip())
-                        except Exception:
+                        except Exception:  # noqa: BLE001 - 单张表失败时保留整页结果
                             htmls.append("")
                     md_tables = list(TABLE_RE.finditer(text))
                     for idx, html in enumerate(htmls[:len(md_tables)]):

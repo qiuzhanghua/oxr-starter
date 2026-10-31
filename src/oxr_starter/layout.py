@@ -43,7 +43,7 @@ def detect_regions(page: pymupdf.Page) -> list[dict]:
                 "box": [round(v) for v in tab.bbox],
                 "preview": f"{len(tab.rows)} 行 × {len(tab.header.names) if tab.header else 0} 列",
             })
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - 检测失败就当没有表格
         pass
 
     regions.sort(key=lambda r: (r["box"][1], r["box"][0]))  # 按阅读顺序从上到下
@@ -82,8 +82,8 @@ def main() -> None:
 
     tables = [r for r in regions if r["type"] == "table"]
     if args.parse_tables and tables:
-        from .backend import LocalBackend
         from . import devices
+        from .backend import LocalBackend
 
         backend = LocalBackend(device=args.device, dtype=args.dtype)
         print(f"设备: {devices.describe(backend.device, backend.dtype)}", flush=True)

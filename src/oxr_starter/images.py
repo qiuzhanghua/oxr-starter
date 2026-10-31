@@ -44,7 +44,7 @@ def extract_page_images(doc: pymupdf.Document, page_no: int, out_dir: Path,
 
         try:
             raw = doc.extract_image(xref)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112 - 损坏的图片直接跳过
             continue
         if not raw or not raw.get("image"):
             continue

@@ -24,13 +24,12 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Self
 
 import pymupdf
 
 from .backend import make_backend
 from .parse_pdf import (
-    PROMPT_WHOLE_PAGE,
-    build_json,
     parse_pageset,
     process_pages,
 )
@@ -185,7 +184,7 @@ class OXRClient:
         """释放本地模型（vllm 后端无需操作）。"""
         self.backend.close()
 
-    def __enter__(self) -> "OXRClient":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc) -> None:

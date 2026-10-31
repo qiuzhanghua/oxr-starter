@@ -2,4 +2,4 @@
 
 from .api import Document, ImageRef, OXRClient, Page, Region, parse
 
-__all__ = ["parse", "OXRClient", "Document", "Page", "Region", "ImageRef"]
+__all__ = ["Document", "ImageRef", "OXRClient", "Page", "Region", "parse"]

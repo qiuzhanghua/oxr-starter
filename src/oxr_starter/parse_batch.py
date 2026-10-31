@@ -16,7 +16,7 @@ import pymupdf
 from PIL import Image
 
 from .backend import make_backend
-from .parse_pdf import parse_pageset, process_pages
+from .parse_pdf import process_pages
 
 DEFAULT_PATTERN = "*.pdf"
 
@@ -141,7 +141,7 @@ def main() -> None:
             extra = f"，表格 {tables_total}" if args.parse_tables else ""
             print(f"[{n}/{len(pdfs)}] {rel} → {len(indices)} 页，{dt:.1f}s{extra}")
             done += 1
-        except Exception as e:  # 单个失败不影响其余文件
+        except Exception as e:  # noqa: BLE001 - 单个失败不影响其余文件
             print(f"[{n}/{len(pdfs)}] 失败: {rel}: {type(e).__name__}: {e}")
             failed += 1
 
