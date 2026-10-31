@@ -129,16 +129,28 @@ class OXRClient:
               parse_tables: bool = False, extract_images: bool = False,
               pages: str = "", resume: bool = False,
               parts_dir: str | Path | None = None) -> Document:
+        """解析一份 PDF。
+
+        `parts_dir` 非空时启用页码级断点缓存；`resume=True` 且未指定
+        `parts_dir` 时用 PDF 同目录的 `<stem>.parts/`。`workers>1` 仅对
+        vllm 后端生效（local 会强制串行）。
+        """
         pdf_path = Path(pdf).expanduser().resolve()
         if not pdf_path.exists():
             raise FileNotFoundError(pdf_path)
 
         doc = pymupdf.open(pdf_path)
-        indices = parse_pageset(pages, doc.page_count)
-        results, failed = process_pages(
-            self.backend, doc, indices, dpi, max_tokens, parse_tables,
-            self.workers, Path(parts_dir) if parts_dir else None,
-        )
+        try:
+            indices = parse_pageset(pages, doc.page_count)
+            parts = Path(parts_dir) if parts_dir is not None else None
+            if parts is None and resume:
+                parts = pdf_path.parent / f"{pdf_path.stem}.parts"
+            results, failed = process_pages(
+                self.backend, doc, indices, dpi, max_tokens, parse_tables,
+                self.workers, parts,
+            )
+        finally:
+            doc.close()
 
         image_map: dict[int, list[dict]] = {}
         images_dir = None

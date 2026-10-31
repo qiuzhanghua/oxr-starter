@@ -399,6 +399,9 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:  # noqa: BLE001 - 任何解析失败都该回 400
             self._error(400, f"请求体不是合法 JSON：{e}")
             return
+        if not isinstance(payload, dict):
+            self._error(400, "请求体必须是 JSON 对象")
+            return
         if payload.get("stream"):
             self._error(400, "不支持 stream=true（本服务为同步返回）")
             return
@@ -408,7 +411,11 @@ class Handler(BaseHTTPRequestHandler):
             self._error(400, str(e))
             return
 
-        max_tokens = int(payload.get("max_tokens") or 2048)
+        try:
+            max_tokens = int(payload.get("max_tokens") or 2048)
+        except (TypeError, ValueError):
+            self._error(400, "max_tokens 必须是整数")
+            return
         t0 = time.time()
         try:
             text = self.runner.submit(image_bytes, prompt, max_tokens)

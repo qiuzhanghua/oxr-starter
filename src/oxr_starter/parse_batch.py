@@ -110,8 +110,9 @@ def main() -> None:
             t1 = time.time()
             workers = args.workers if backend.name == "vllm" else 1
             parts_dir = None if args.no_resume else dst.parent / f"{dst.stem}.parts"
-            results, failed = process_pages(backend, doc, indices, args.dpi, args.max_tokens,
-                                            args.parse_tables, workers, parts_dir)
+            results, page_failures = process_pages(backend, doc, indices, args.dpi,
+                                                   args.max_tokens, args.parse_tables,
+                                                   workers, parts_dir)
             tables_total = 0
             for i in indices:
                 if i not in results:
@@ -120,8 +121,8 @@ def main() -> None:
                 text, tbls = results[i]
                 tables_total += len(tbls)
                 parts.append(f"\n<!-- 第 {i} 页 -->\n\n{text}\n")
-            if failed:
-                raise RuntimeError(f"{len(failed)} 页失败: {failed}")
+            if page_failures:
+                raise RuntimeError(f"{len(page_failures)} 页失败: {page_failures}")
             dst.write_text("".join(parts), encoding="utf-8")
             if args.json:
                 from .parse_pdf import build_json
