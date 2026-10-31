@@ -294,6 +294,47 @@ PDF 每页约 28 秒，主要花在视觉 token 上的自回归生成。想加�
 完整流水线在 [SoMarkAI/OXR](https://github.com/SoMarkAI/OXR) 仓库的 `services/`。
 本项目只做**单图/单页**的本地验证，没有 PDF 分页与版面分析模型。
 
+## 测试
+
+```bash
+uv sync                 # 默认安装 dev 组（pytest / ruff）
+uv run pytest           # 快速用例：不加载模型、不联网，约 3 s
+uv run ruff check tests src
+```
+
+用例全部用假后端（`tests/helpers.py` 里的 `FakeBackend` / `FakeRunner`）替换推理，
+PDF 也由 PyMuPDF 现场合成，所以没下模型、没有 GPU 的机器也能跑：
+
+| 文件 | 覆盖 |
+|---|---|
+| `test_devices.py` | cuda→mps→cpu 选择、dtype 解析、显存口径、`PeakTracker`（monkeypatch torch）|
+| `test_server.py` | `/health`、`/v1/models`、`/v1/chat/completions`、400/404/500/504、data URI、`ThreadRunner` 串行/超时、`ProcessRunner` 队列统计 |
+| `test_parse_pdf.py` | 页码解析、渲染/裁剪、表格替换、并发、失败隔离、断点续跑、CLI 的 md/json/图片输出 |
+| `test_parse_batch.py` | 递归收集、`--skip-existing`、`--limit`、`--pages`、单文件失败计数 |
+| `test_api.py` | `Document` 的 markdown/to_dict/save、`OXRClient` 复用、resume、图片提取 |
+| `test_backend.py` | 本地模型在 CUDA/MPS/CPU 上的放置（假 transformers）、vLLM 请求体、连接失败 |
+| `test_images_layout.py` | 位图提取与 manifest、区域检测、`layout` CLI |
+| `test_demo_load.py` | `generate_demo` / `load_model` 的 CLI 输出 |
+| `test_slow_perf.py` | MPS 性能回归：2.4M→1.2M 的视觉加速比、解码 tok/s、单次视觉耗时上限 |
+
+真实模型的冒烟测试默认跳过，需要显式开启：
+
+```bash
+OXR_SLOW=1 uv run pytest -m slow
+# 可选：OXR_DEVICE=mps OXR_DTYPE=fp16 OXR_MAX_SECONDS=120 ...
+```
+
+它会在合成页面上跑一次完整的 `OXRClient.parse()`，断言解析成功且耗时不超过
+`OXR_MAX_SECONDS`（默认 600 s），用来兜住 transformers 升级后的明显性能回退。
+
+MPS 性能回归单独跑（会打印 vision / decode 实测值）：
+
+```bash
+OXR_SLOW=1 uv run pytest tests/test_slow_perf.py -s
+# 阈值：OXR_VISION_MAX_SECONDS（默认 8）/ OXR_VISION_SPEEDUP_MIN（默认 1.3）
+#       / OXR_MIN_TOK_S（默认 20）
+```
+
 ## 目录
 
 ```
